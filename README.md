@@ -1,7 +1,5 @@
 # arch-linux-setup-fde-boot-and-system
 
-Pre-installation
-
 #Verify signature
 gpg --keyserver pgp.mit.edu --keyserver-options auto-key-retrieve --verify archlinux-version-x86_64.iso.sig
 
