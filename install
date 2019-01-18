@@ -136,7 +136,7 @@ echo "KEYMAP=us" > /etc/vconsole.conf
 echo "archlinux" > /etc/hostname
 
 #set hosts
-echo "127.0.0.1	localhost::1\n127.0.0.1		localhost\n127.0.0.1	archlinux.localdomain	archilinux"
+echo "127.0.0.1	localhost::1\n127.0.0.1		localhost\n127.0.0.1	archlinux.localdomain	archilinux" > /etc/hosts
 
 #Set root Password
 passwd
