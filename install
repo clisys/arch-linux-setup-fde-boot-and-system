@@ -1,0 +1,228 @@
+Pre-installation
+
+#Verify signature
+gpg --keyserver pgp.mit.edu --keyserver-options auto-key-retrieve --verify archlinux-version-x86_64.iso.sig
+
+#BIOS and UEFI bootable USB
+wipefs --all /dev/sdx
+dd bs=4M if=path/to/archlinux.iso of=/dev/sdx status=progress oflag=sync
+
+#Boot to live environment
+#Set the keyboard layout
+loadkeys us
+
+#Verify the boot mode UEFI
+ls /sys/firmware/efi/efivars
+
+#Connect to the Internet
+wifi-menu
+ping -c 5 8.8.8.8
+
+#Update the system clock
+timedatectl set-ntp true
+timedatectl set-timezone Asia/Jakarta
+
+#layout partition disks :
+
++---------------------+----------------------+--------------------------------+----------------------+----------------------+
+| BIOS boot partition | EFI system partition | boot partition                 | Logical volume 1     | Logical volume 2     |
+|                     |                      |                                |                      |                      |
+|                     | /boot/efi            | /boot                          | /                    | [SWAP]               |
+|                     |                      |                                |                      |                      |
+|                     |                      | /dev/mapper/bootencrypt        | /dev/mapper/vg-root  | /dev/mapper/vg-swap  |
+| /dev/sda1           | /dev/sda2            |--------------------------------|----------------------+----------------------+
+| unencrypted         | unencrypted          |  /dev/sda3 encrypted using lvm | /dev/sda4 encrypted using LVM on LUKS       |                    |
++---------------------+----------------------+--------------------------------+---------------------------------------------+
+
+gdisk -l /dev/sda
+...
+Number  Start (sector)    End (sector)  Size       Code  Name
+   1            2048            4095   1024.0 KiB  EF02  BIOS boot partition
+   2            4096         1130495   550.0 MiB   EF00  EFI System
+   3         1130496         3227647   1024.0 MiB  8300  Linux filesystem
+   4         3227648       976773134   464.2 GiB   8E00  Linux LVM
+   
+#Delete all partitions on disk this will delete all data on your hardisk be carefull
+
+gdisk /dev/sda
+o = blank gpt
+y = yes
+w = write
+
+#setup partition
+gdisk /dev/sda
+
+#BIOS boot partition
+n
+1
+2048
+4095
+EF02
+#EFI System
+n
+2
+4096
+1130495
+EF00
+#Linux filesystem for boot
+n
+3
+1130496
+3227647
+8300
+#Linux LVM for system and swap
+n
+4
+3227648
+976773134
+8E00
+w
+y
+
+#Encrypt Boot partition
+cryptsetup --user-random luksFormat --cipher aex-xts-plain64 -h sha512 -s 512 /dev/sda3
+cryptsetup open /dev/sda3 bootencrypt
+
+#Encrypt System partition root and swap under LVM
+cryptsetup --user-random luksFormat --cipher aex-xts-plain64 -h sha512 -s 512 /dev/sda4
+cryptsetup open /dev/sda4 encrypt
+pvcreate /dev/mapper/encrypt
+vgcreate ArchLvm /dev/mapper/encrypt
+lvcreate -L +8G ArchLvm -n swap
+lvcreate -l +100%FREE ArchLvm -n root
+ 
+#Create filesystems for efi, boot, root and swap
+mkfs.vfat -F 32 /dev/sda2
+mkfs.ext4 /dev/mapper/bootencrypt
+mkfs.ext4 /dev/mapper/ArchLvm-root
+mkswap /dev/mapper/ArchLvm-swap
+
+#Mount for install ArchLinux
+mount /dev/mapper/ArchLvm-root /mnt
+mkdir /mnt/boot
+mount /dev/mapper/bootencrypt /mnt/boot
+mkdir /mnt/boot/efi
+mount /dev/sda2 /mnt/boot/efi
+swapon /dev/mapper/ArchLvm-swap
+mkdir /mnt/hostlvm
+mount --bind /run/lvm /mnt/hostlvm
+
+#speedup mirrorlist
+pacman -Sy reflector
+reflector --score 100 --fastest 25 --sort rate --save /etc/pacman.d/mirrorlist --verbose
+
+#install Arch linux system (i'm using laptop with broadcom wireless card and intel cpu)
+pacstrap /mnt base base-devel dialog wpa_supplicant grub-efi-x86_64 efibootmgr zsh linux-headers broadcom-wl-dkms git reflector intel-ucode
+
+#generate partition table
+gefstab -U /mnt > /mnt/etc/fstab
+
+#enter chroot
+arch-chroot /mnt /bin/bash
+
+#Set time zone and sync clock
+ln -sf /usr/share/zoneinfo/Asia/Jakarta /etc/localtime
+hwclock --systohc --utc
+
+#set locale
+echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
+echo "LANG=en_us.UTF-8" > /etc/locale.conf
+locale-gen
+
+#set keymap
+echo "KEYMAP=us" > /etc/vconsole.conf
+
+#set hostname
+echo "archlinux" > /etc/hostname
+
+#set hosts
+echo "127.0.0.1	localhost::1\n127.0.0.1		localhost\n127.0.0.1	archlinux.localdomain	archilinux"
+
+#Set root Password
+passwd
+
+#create user with sudo access
+echo "\n%wheel ALL=(ALL) ALL\n" > /etc/sudoers
+useradd -m -g wheel -s /usr/bin/zsh userarch
+passwd userarch
+
+#set HOOKS initramfs
+nano /etc/mkinitcpio.conf
+
+HOOKS="base udev autodetect modconf block keyboard keymap encrypt lvm2 resume filesystems fsck"
+
+Generate initrd image:
+mkinitcpio -P
+
+#configure Grub-EFI
+Edit the file /etc/default/grub like this:
+
+GRUB_CMDLINE_LINUX_DEFAULT="quiet net.ifnames=0 biosdevname=0"
+GRUB_CMDLINE_LINUX="cryptdevice=/dev/sda4:encrypt resume=/dev/mapper/ArchLvm-swap"
+GRUB_PRELOAD_MODULES="part_gpt part_msdos lvm"
+GRUB_ENABLE_CRYPTODISK=y
+
+
+#install Grub
+grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=ArchLinux
+
+#generate grub config
+ln -s /hostlvm /run/lvm
+grub-mkconfig -o /boot/grub/grub.cfg
+
+#exit chroot
+exit
+umount -R /mnt
+swapoff -a
+reboot
+
+#Setup system boot to new system. 
+#password for boot encrypt and system encrypt will prompt
+#login as root 
+#simple setup with Archlinux Ultimate Install from https://github.com/helmuthdu/aui
+#connect to internet
+wifi-menu
+
+#if u forgot ssid profile
+ls /etc/netctl 
+
+#auto connect next boot
+netctl enable wlan0-ssid
+netctl start wlan0-ssid
+
+#setup system with Archlinux ultimate install
+git clone git://github.com/helmuthdu/aui
+cd aui
+./lilo
+
+#feature Archlinux ultimate install
+#LILO SCRIPT
+#Backup all modified files
+#Install additional repositories
+#Create and configure new user
+#Install and configure sudo
+#Automatic enable services in systemd
+#Install an AUR Helper [trizen, yay]
+#Install base system
+#Install systemd
+#Install Preload
+#Install Zram
+#Install Xorg
+#Install GPU Drivers
+#Install CUPS
+#Install Additional wireless/bluetooth firmwares
+#Ensuring access to GIT through a firewall
+#Install DE or WM [Cinnamon, Enlightenment, FluxBox, GNOME, i3, KDE, LXDE, OpenBox, XFCE]
+#Install Developement tools [Vim, Emacs, Eclipse...]
+#Install Office apps [LibreOffice, GNOME-Office, Latex...]
+#Install System tools [Wine, Virtualbox, Grsync, Htop]
+#Install Graphics apps [Inkscape, Gimp, Blender, MComix]
+#Install Internet apps [Firefox, Google-Chrome, Jdownloader...]
+#Install Multimedia apps [Rhythmbox, Clementine, Codecs...]
+#Install Games [Desura, PlayOnLinux, Steam, Minecraft...]
+#Install Fonts [Liberation, MS-Fonts, Google-webfonts...]
+#Install and configure Web Servers
+#Many More
+
+If you like Archlinux ultimate install, please consider a small Paypal donation to creator at helmuthdu@gmail.com 
+
