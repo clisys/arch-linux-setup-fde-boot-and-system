@@ -80,11 +80,11 @@ w
 y
 
 #Encrypt Boot partition
-cryptsetup --user-random luksFormat --cipher aex-xts-plain64 -h sha512 -s 512 /dev/sda3
+cryptsetup --user-random luksFormat --cipher aes-xts-plain64 -h sha512 -s 512 /dev/sda3
 cryptsetup open /dev/sda3 bootencrypt
 
 #Encrypt System partition root and swap under LVM
-cryptsetup --user-random luksFormat --cipher aex-xts-plain64 -h sha512 -s 512 /dev/sda4
+cryptsetup --user-random luksFormat --cipher aes-xts-plain64 -h sha512 -s 512 /dev/sda4
 cryptsetup open /dev/sda4 encrypt
 pvcreate /dev/mapper/encrypt
 vgcreate ArchLvm /dev/mapper/encrypt
